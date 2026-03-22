@@ -191,13 +191,21 @@ def train_one_epoch_direct(config, train_loader, model, criterion, optimizer, wr
             else:
                 pred_binary = torch.argmax(logits, dim=1, keepdim=True).float()
             
-            intersection = (pred_binary * masks.float()).sum()
-            union = pred_binary.sum() + masks.float().sum()
-            dice_score = (2.0 * intersection) / (union + 1e-8)
+            # Dice = 2 * |A ∩ B| / (|A| + |B|)
+            # Compute per-sample then average
+            pred_flat = pred_binary.view(pred_binary.size(0), -1)
+            mask_flat = masks.float().view(masks.size(0), -1)
+            
+            intersection = (pred_flat * mask_flat).sum(dim=1)
+            union = pred_flat.sum(dim=1) + mask_flat.sum(dim=1)
+            
+            # Per-sample dice, then mean across batch
+            dice_per_sample = (2.0 * intersection + 1e-8) / (union + 1e-8)
+            dice_score = dice_per_sample.mean().item()
         
         # Accumulate metrics
         epoch_loss += loss_total.item()
-        epoch_dice += dice_score.item()
+        epoch_dice += dice_score  # Already a float from .item() above
         num_batches += 1
         
         # Logging
@@ -208,7 +216,7 @@ def train_one_epoch_direct(config, train_loader, model, criterion, optimizer, wr
                 f'Loss: {loss_total.item():.4f} '
                 f'Seg: {loss_seg.item():.4f} '
                 f'Contrast: {contrastive_loss.item():.4f} '
-                f'Dice: {dice_score.item():.4f}'
+                f'Dice: {dice_score:.4f}'
             )
         
         # Tensorboard logging
@@ -217,7 +225,7 @@ def train_one_epoch_direct(config, train_loader, model, criterion, optimizer, wr
             writer.add_scalar('Train/Loss_Total', loss_total.item(), step)
             writer.add_scalar('Train/Loss_Segmentation', loss_seg.item(), step)
             writer.add_scalar('Train/Loss_Contrastive', contrastive_loss.item(), step)
-            writer.add_scalar('Train/Dice', dice_score.item(), step)
+            writer.add_scalar('Train/Dice', dice_score, step)
     
     # Calculate averages
     if num_batches == 0:
@@ -298,12 +306,18 @@ def validate_direct(config, val_loader, model, criterion, logger):
             else:
                 pred_binary = torch.argmax(logits, dim=1, keepdim=True).float()
             
-            intersection = (pred_binary * masks.float()).sum()
-            union = pred_binary.sum() + masks.float().sum()
-            dice_score = (2.0 * intersection) / (union + 1e-8)
+            # Dice = 2 * |A ∩ B| / (|A| + |B|)
+            pred_flat = pred_binary.view(pred_binary.size(0), -1)
+            mask_flat = masks.float().view(masks.size(0), -1)
+            
+            intersection = (pred_flat * mask_flat).sum(dim=1)
+            union = pred_flat.sum(dim=1) + mask_flat.sum(dim=1)
+            
+            dice_per_sample = (2.0 * intersection + 1e-8) / (union + 1e-8)
+            dice_score = dice_per_sample.mean().item()
             
             val_loss += loss.item()
-            val_dice += dice_score.item()
+            val_dice += dice_score
             num_batches += 1
     
     if num_batches == 0:
